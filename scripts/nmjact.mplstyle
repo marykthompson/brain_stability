@@ -1,0 +1,23 @@
+#https://matplotlib.org/tutorials/introductory/customizing.html
+#https://matplotlib.org/users/dflt_style_changes.html
+axes.titlesize : 7
+axes.labelsize : 7
+axes.linewidth : 0.75
+lines.linewidth : 0.75
+lines.markersize : 5
+lines.markeredgewidth: 0.75
+errorbar.capsize: 5
+xtick.labelsize : 7
+ytick.labelsize : 7
+legend.fontsize: 7
+pdf.fonttype: 42
+axes.spines.right : False
+axes.spines.top : False
+font.family: sans-serif
+font.sans-serif: Arial
+font.size: 7
+xtick.major.width : 0.75
+ytick.major.width: 0.75
+legend.handletextpad: 0.5
+legend.columnspacing: 1
+legend.handlelength: 0.75
