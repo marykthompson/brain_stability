@@ -4,6 +4,7 @@ Functions to clean and filter data
 '''
 import pandas as pd
 import os
+from pyfaidx import Fasta
 
 def filter_low_exp(count_file, filter_by='cpm', filter_co=1, npass=3,
                    read_col='summed_est_counts', experiments=None, outname=None):
@@ -62,3 +63,22 @@ def load_dataset(count_file, passed_gene_file):
     passed_genes = pd.read_csv(passed_gene_file, header=None)[0]
     df = df[df.index.isin(passed_genes)].copy()
     return df
+
+def get_txt_id(s):
+    '''
+    This function is needed to extract the txt id for the CDS file from Flybase.
+    '''
+    s2 = s.split('; ')
+    txt_id = list(filter(lambda x: x.startswith('parent'), s2))[0].split('=')[-1].split(',')[1]
+    return txt_id
+
+def parse_fb_fasta(infile, extract_ids=False):
+    '''
+    Use pyfaidx Fasta() to load the Flybase sequences. Use the FBtr IDs.
+    '''
+    if extract_ids:
+        txt_seqs = Fasta(infile, read_long_names=True, key_function=get_txt_id)
+    else:
+        txt_seqs = Fasta(infile)
+    return txt_seqs
+

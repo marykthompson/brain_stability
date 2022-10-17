@@ -1,0 +1,11 @@
+*
+!scripts
+!notebooks
+!notebooks/*
+!run_notebooks.sh
+!.gitignore
+*/.Rhistory
+*/.pybiomart.sqlite
+*/.DS_Store
+*/*/.DS_Store
+*go-basic.obo
