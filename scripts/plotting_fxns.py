@@ -11,12 +11,13 @@ import shutil
 from urllib.request import urlretrieve
 from collections import defaultdict
 import matplotlib as mpl
+from matplotlib import lines
 import seaborn as sns
 import matplotlib.pyplot as plt
 from stats_helpers import calc_fisher_exact
+from decimal import Decimal
 
 from plot_helpers import *
-
 
 def get_box_coords(ax):
     '''
@@ -33,6 +34,35 @@ def get_box_coords(ax):
             x, _ = display_to_data.transform((x_middle, 0))
             x_pos.append(x)
     return x_pos
+
+def get_letter_height(ax, fig):
+    '''
+    Return the height of the letter "R" in data coordinates.
+    This can be used to place text and compensate for issues like baseline offsets with asterisks.
+    '''
+    # Hack to adjust the height of the asterisks to correct baseline
+    t = ax.text(0.5, 0.5, 'R')
+    r = fig.canvas.get_renderer()
+    bb = t.get_window_extent(renderer=r)
+    text_height = bb.height
+    text_width = bb.width
+    ax_height = ax.get_window_extent(renderer=r).height
+    ymin, ymax = ax.get_ylim()
+    data_range = abs(ymax-ymin)
+    # calculate in display units because inverse transform not always working properly
+    # print('text height', text_height)
+    # axis_to_display = ax.transAxes
+    # total_height = axis_to_display.transform((0, data_range))[1]
+    # print('total_height', total_height)
+    # This is the height of the letter R in the axis units
+    R_height = text_height/ax_height
+    print('rh', R_height)
+    # To get the height in data units
+    R_h_data = R_height*data_range
+    print('data range', data_range)
+    del ax.texts[-1]
+    print('rh data', R_h_data)
+    return R_h_data
 
 def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_name=None, order=None, y_excluded=[], test_y=None,
                  x_lab=None, y_lab=None, add_n_numbers=True, ax=None):
@@ -80,91 +110,34 @@ def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_nam
 
         _, p1 = stats.mannwhitneyu(g1, g2)
         p_vals.append(p1)
-
     stars = sig_2_stars(p_vals)
+    stars = np.where(stars=='ns', '', stars)
 
     # Put p_vals on the y-axis for having sig. difference to the stability of the other groups
+    letter_h = get_letter_height(ax, plt.gcf())
+    print('letter h', letter_h)
     for i in range(0, len(stars)):
         # ax.text(110, i+0.2, stars[i], ha='center', va='center')
-        # This one needed to align Fig. 4. Need to figure out why the asterices aren't quite lining up right.
-        ax.text(110, i+0.1, stars[i], ha='center', va='center')
+        # This one needed to align Fig. 4. Need to figure out why the asterisks aren't quite lining up right.
+        # * is written as superscript in a lot of fonts
+        # ax.text(110, row.height-letter_h*0.8, row.stars, ha='center', va=row.align, color='k', alpha=0.5, transform=ax.transData)
+        # Because indexing goes from top to bottom of plot, need to add the letter height to put it lower
+        ax.text(110, i+letter_h*0.8, stars[i], ha='center', va='bottom')
+
+        # ax.text(110, i+0.1, stars[i], ha='center', va='center')
 
     return ax
 
-def enrich_heatmap(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_name=None, test_y=None, x_lab=None, y_lab1=None, order=[], y_excluded=[],
-                   y_lab2=None, xticklabs1=['counts'], xticklabs2=['enrichment'], fig=None, lstart=0.68, hstart=0.15, hm_width=0.06, cb_width=0.03, ax=None):
+def enrich_heatmap(data=None, all_genes=None, x=None, y=None, hue=None, hue_name=None, test_y=None, x_lab=None, y_lab1=None,
+                   y_lab2=None, xticklabs1=['counts'], xticklabs2=['enrichment'], fig=None, lstart=0.68, hstart=0.15, hm_width=0.06, cb_width=0.03,
+                   ylabels=False, hm_xlab=True, order=None, cbar_lab_sp=4.5):
     '''
     Plot fraction of group and enrichment stats.
-    Generally this will be plotted to the right side of the swarmplot
+    Generally this will be plotted to the right side of the swarmplot.
+    cbar_lab_sp is used to space the cbar label since align_ylabels() doesn't seem to work on the right.
     '''
-    if order == []:
+    if order is None:
         order = data.groupby(y)[x].median().sort_values().index
-    order2 = [i for i in order if i not in y_excluded]
-
-    h = 0.95 - hstart
-    cbar_h = (0.95 - hstart - 0.04)/2
-    # Now calculate and plot the enrichment heatmaps to the right
-    ax1 = fig.add_axes((lstart, hstart, hm_width, h))
-    ax2 = fig.add_axes((lstart+hm_width+0.01, hstart, hm_width, h))
-    ax3 = fig.add_axes((lstart+hm_width*2+0.02, hstart, cb_width, cbar_h))
-    ax4 = fig.add_axes((lstart+hm_width*2+0.02, hstart+cbar_h+0.04, cb_width, cbar_h))
-
-    total_genes = len(all_genes)
-    enrich_pvals = []
-    frac_genes = []
-    n_genes = []
-    for i in order:
-        l1 = data.query(f'{y}==@i').index
-        l2 = all_genes.query(hue).index
-        odds_r, log_p, lower, upper, table = calc_fisher_exact(l1, l2, total_genes)
-        enrich_pvals.append(log_p)
-        n_ol = len(l1.intersection(l2))
-        frac_genes.append(n_ol/len(l1))
-        n_genes.append(n_ol)
-
-    # Sns heatmap expects a 2D array
-    frac_a = np.array(frac_genes).reshape(-1,1)
-    ngene_a = np.array(n_genes).reshape(-1,1)
-    enrich_pvals = np.array(enrich_pvals).reshape(-1,1)
-    # Replace np.nan with 0 for enrich_pvals in order to plot
-    enrich_pvals = np.nan_to_num(enrich_pvals)
-    ax1 = sns.heatmap(frac_a, annot=ngene_a, fmt='d',
-                            ax=ax1, cmap='viridis', cbar=False)
-    ax2 = sns.heatmap(enrich_pvals, ax=ax2, cmap='magma', cbar=False)
-
-    ax1.set_yticks([])
-    ax2.set_yticks([])
-    ax4.set_yticks([])
-    ax1.set_xticklabels(xticklabs1, rotation=45)
-    ax2.set_xticklabels(xticklabs2, rotation=45)
-    norm1 = plt.Normalize(frac_a.min(), frac_a.max())
-    sm1 = plt.cm.ScalarMappable(cmap='viridis', norm=norm1)
-
-    norm2 = plt.Normalize(enrich_pvals.min(), enrich_pvals.max())
-    sm2 = plt.cm.ScalarMappable(cmap='magma', norm=norm2)
-
-    # https://stackoverflow.com/questions/32462881/add-colorbar-to-existing-axis
-
-    fig.colorbar(sm1, cax=ax4, orientation='vertical')
-    ax4.set_ylabel(y_lab1)
-
-    fig.colorbar(sm2, cax=ax3, orientation='vertical')
-    ax3.set_ylabel(y_lab2)
-    # fig.align_ylabels() # doesn't seem to work with labels on the right
-
-    labelx = 4.5
-    ax3.yaxis.set_label_coords(labelx, 0.5)
-    ax4.yaxis.set_label_coords(labelx, 0.5)
-
-
-def enrich_heatmap2(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_name=None, test_y=None, x_lab=None, y_lab1=None,
-                   y_lab2=None, xticklabs1=['counts'], xticklabs2=['enrichment'], fig=None, lstart=0.68, hstart=0.15, hm_width=0.06, cb_width=0.03, ax=None):
-    '''
-    Plot fraction of group and enrichment stats.
-    Generally this will be plotted to the right side of the swarmplot
-    Version 2 is under development to use for any number of hue names (i.e. RBPs and mRBPs)
-    '''
-    order = data.groupby(y)[x].median().sort_values().index
     # Add the gene numbers to the cell type genes
     gene_nums = data[y].value_counts().loc[order].values
     new_labels = ['%s (%s)' % (i, j) for i,j in zip(order, gene_nums)]
@@ -212,15 +185,15 @@ def enrich_heatmap2(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_
                             ax=ax1, cmap='viridis', cbar=False)
     ax2 = sns.heatmap(arrays['enrich'], ax=ax2, cmap='magma', cbar=False)
 
+    # Plot the ylabels if necessary
     # It plots them rotated unless you specify rotation=0
-    ax1.set_yticklabels(new_labels, rotation=0)
-    ax1.set_ylabel('cell type (num genes)')
+    if ylabels == False:
+        ax1.set_yticks([])
+    else:
+        ax1.set_yticklabels(new_labels, rotation=0)
+        ax1.set_ylabel('cell type (num genes)')
     ax2.set_yticks([])
 
-    # loc = plticker.MultipleLocator(base=1.0)
-    # ax1.xaxis.set_major_locator(loc)
-    # ax2.xaxis.set_major_locator(loc)
-    # Force tick placement even if not enough space by default
     tick_pos = np.arange(0.5, len(hue), 1)
     ax1.set_xticks(tick_pos)
     ax2.set_xticks(tick_pos)
@@ -228,8 +201,9 @@ def enrich_heatmap2(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_
     ax1.set_xticklabels(xticklabs1, rotation=45)
     ax2.set_xticklabels(xticklabs2, rotation=45)
 
-    ax1.set_xlabel('counts', loc='right')
-    ax2.set_xlabel('enrichment', loc='left')
+    if hm_xlab:
+        ax1.set_xlabel('counts', loc='right')
+        ax2.set_xlabel('enrichment', loc='left')        
 
     norm1 = plt.Normalize(arrays['frac'].min(), arrays['frac'].max())
     sm1 = plt.cm.ScalarMappable(cmap='viridis', norm=norm1)
@@ -247,13 +221,11 @@ def enrich_heatmap2(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_
     ax3.set_ylabel(y_lab2)
 
     # fig.align_ylabels() # doesn't seem to work with labels on the right
-    labelx = 6
-    # coords3 = ax3.yaxis.get_label().get_position()[0]
-    # Why is this such a huge number????
-    # print('coords3', coords3)
-    ax3.yaxis.set_label_coords(labelx, 0.5)
-    ax4.yaxis.set_label_coords(labelx, 0.5)
-    return ax3.yaxis.get_label().get_position()
+
+    ax3.yaxis.set_label_coords(cbar_lab_sp, 0.5)
+    ax4.yaxis.set_label_coords(cbar_lab_sp, 0.5)
+    arrays['order'] = order
+    return arrays
 
 class PrettyBox(object):
     '''
@@ -277,54 +249,103 @@ class PrettyBox(object):
             line.set_color('k')
             line.set_lw(lw)
         # Need to replot legend to add the transparent colors
-        # No artists with labels found to put in legend.  Note that artists whose label start with an underscore are ignored when legend() is called with no argument.
+        # No artists with labels found to put in legend.  
+        # Note that artists whose label start with an underscore are ignored when legend() is called with no argument.
         # How can we find out if any of the artists have labels?
-        if 'hue' in kwargs:
-            ax.legend(title=kwargs['hue'])
-        else:
-            ax.legend()
-        
-
-
-        # if len(ax.get_legend_handles_labels()[0]) > 0:
-        #     handles, labels = ax.get_legend_handles_labels()
-        #     new_handles = []
-        #     for lh in handles:
-        #         lh.set_ec('k')
-        #         lh.set_fc((*lh.get_fc()[0:3], box_alpha))
-        #         lh.set_ec((0,0,0,1))
-        #         new_handles.append(lh)
-        #     #set new handles to change the linewidth and the alpha
-        #     ax.legend(new_handles, labels, title=kwargs['hue'])
-        #     #to make the legend outline black, if desired
-        #     leg = ax.legend()
-        #     leg.get_frame().set_edgecolor('k')
-        #     leg.get_frame().set_lw(0.75)
-
+        handles, labels = ax.get_legend_handles_labels()
+        if handles != []:
+            if 'hue' in kwargs:
+                ax.legend(title=kwargs['hue'])
+            else:
+                ax.legend()
         return ax
 
-def plot_grey_scatter(data=None, x=None, y=None, genegroup=None, grouplabel=None):
+class Connector:
+    '''Add line showing comparison'''
+    def __init__(self, ax):
+        self.gap = (ax.get_ylim()[1] - ax.get_ylim()[0])*.05
+        self.top = ax.get_ylim()[1] + self.gap
+
+    def add_connector(self, ax, xvals):
+        '''Pass a list of x vals to use for drawing a horizontal line'''
+        line = lines.Line2D(xvals, [self.top, self.top])
+        line.set_clip_on(False)
+        ax.add_line(line)
+        self.top += self.gap
+
+def compare_experiments(df, experiments=None, id_col=None, val_col=None, other_cols=[], pseudo=0, 
+                         read_col='summed_est_counts', log=True):
+    '''
+    df is a "flat" dataframe with only one index level and the id_val in the columns
+    experiments is a list of dictionaries with columns specifying the experiment and data labels,
+    position 0 will be the x, position 1 will be the y
+    i.e. [{'RNAtype':'input', 'condition':'ph'}, {'RNAtype':'input', 'condtion':'mock'}]
+    if pseduo='min', then find the minimum value accross the set of experiments to use as the pseudocount.
+    For version 2: 
+    add other_cols arg to output other columns that can also be used for filtering later.
+    '''
+    dfs = []
+    for i in experiments:
+        query_str = '&'.join([f'{k} == "{v}"' if type(v) == str else f'{k} == {v}' for k,v in i.items()])
+        # This only works if all the search values are strings, but not if float or int
+        # query_str = '&'.join([f'{k} == "{v}"' for k,v in i.items()])
+        this_df = df.query(query_str)[[id_col, val_col, *other_cols]].copy()
+        dfs.append(this_df)
+    cdf = pd.merge(*dfs, left_on=id_col, right_on=id_col, suffixes=('_x', '_y'))
+    val_cols = [f'{val_col}_x', f'{val_col}_y']
+    if pseudo == 'min':
+        a = np.unique(pd.concat([cdf[val_cols[0]], cdf[val_cols[1]]]))
+        lowest_nonzero = a[a>0][0]        
+        pseudo = lowest_nonzero
+    
+    cdf[val_cols] += pseudo
+    if log:
+        cdf[val_cols] = cdf[val_cols].apply(np.log10)
+    return cdf
+
+def plot_scatter(df, experiments=None, id_col=None, genegroup=None, grouplabel=None, xlabel=None, ylabel=None, rsquare=True, 
+                 loc=None, diagonal=None, histscatter=False, limits=None, same_max=False, ax=None):
     '''
     Plot scatter points in light grey and overlay members of a gene group.
+    df is a "flat" dataframe with only one index level and the id_val in the columns
+    experiments is a list of column names
+    position 0 will be the x, position 1 will be the y
+    limits = dictionary with x and y limits, i.e. {'x':{'left':-2, 'right':4}, 'y':{'bottom':-2, 'top':4}}
+    same_max means that both axis will have the same max value
     '''
-    fig = plt.figure(figsize=(dfig, dfig), constrained_layout=True)
-    ax = fig.add_subplot(111)
-    x1 = data[x]
-    y1 = data[y]
-    ax.scatter(x1, y1, s=5, color='k', alpha=0.3, ec='none')
+    xname, yname = experiments
+    x = df[xname]
+    y = df[yname]
+    if histscatter:
+        ax = sns.histplot(data=df, x=x, y=y, cmap='rocket', ax=ax, zorder=2)
+    else:
+        ax.scatter(x, y, s=5, color='k', alpha=0.3, ec='none')
 
-    if genegroup is not None:
-        data['group'] = data.index.isin(genegroup)
-        x2 = data[data['group']][x]
-        y2 = data[data['group']][y]
+    if genegroup:
+        df['group'] = df[id_col].isin(genegroup)
+        x2 = df.query('group')[xname]
+        y2 = df.query('group')[yname]
         ax.scatter(x2, y2, s=5, color=color_dict['purple'], ec='none', label=grouplabel)
-
-    rval, pval = stats.pearsonr(x1, y1)
-    r2_val_av = rval**2
-    loc = plticker.MultipleLocator(base=5.0)
-    ax.xaxis.set_major_locator(loc)
-    ax.yaxis.set_major_locator(loc)
-    ax.text(0.1, 0.9, 'r'r'$^2$'' = %1.2f' % r2_val_av, fontsize = 8, transform=ax.transAxes)
+    if rsquare:
+        rval, pval = stats.pearsonr(x, y)
+        r2_val_av = rval**2
+        ax.text(0.1, 0.9, 'r'r'$^2$'' = %1.2f' % r2_val_av, fontsize = 8, transform=ax.transAxes)
+    if loc:
+        ax.xaxis.set_major_locator(loc)
+        ax.yaxis.set_major_locator(loc)
+    if same_max:
+        maxlim = max(ax.get_ylim()[1], ax.get_xlim()[1])
+        ax.set_xlim(right=maxlim)
+        ax.set_ylim(top=maxlim)
+    if limits:
+        if 'x' in limits:
+            ax.set_xlim(**limits['x'])
+        if 'y' in limits:
+            ax.set_ylim(**limits['y'])
+    if diagonal:
+        ax.axline((0, 0), slope=1, color=color_dict['grey'], alpha = 0.8, zorder=0)
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
     return ax
 
 def get_boxtop(df, **kwargs):
@@ -344,70 +365,74 @@ def get_boxtop(df, **kwargs):
     whisk = q3 + (iqr*1.5)
     h = data[data < whisk].max()
     return h
-#     if 'col2' in kwargs:
-#         y1 = df.loc[(df[kwargs['col1']] == kwargs['val1']) & (df[kwargs['col2']] == kwargs['val2'])][kwargs['val_col']].quantile(0.25)
-#         y2 = df.loc[(df[kwargs['col1']] == kwargs['val1']) & (df[kwargs['col2']] == kwargs['val2'])][kwargs['val_col']].quantile(0.75)
-#     else:
-#         y1 = df.loc[df[kwargs['col1']] == kwargs['val1']][kwargs['val_col']].quantile(0.25)
-#         y2 = df.loc[df[kwargs['col1']] == kwargs['val1']][kwargs['val_col']].quantile(0.75)
 
-#     iqr = y2-y1
-#     return y2 + iqr*1.5
-
-def sig_2_stars(p, siglevels=np.array([0.05, 10e-10, 10e-40]), remove_ns=True):
+def sig_2_stars(pvals, siglevels=np.array([0.05, 10e-10, 10e-40]), tex=False):
     '''
-    Convert array of p, pvalues to stars indicating significance levels.
-    If remove_ns, convert the cases of "ns" to empty string before return
+    Convert array to asterisks. If tex=true, use the mathematical rep. of \ast.
+    Problems: math asterisks look frilly and have too much space between them
     '''
-    sigstars = ['ns']
-    for i in range(0, len(siglevels)):
-        sigstars.append('*'*(i+1))    
-    sigstars = np.array(sigstars)
-    
-    j = np.digitize(p, siglevels)
+    if tex:
+        sigstars = np.array(['ns', r'\ast', r'\ast\ast', r'\ast\ast\ast'])
+    else:
+        sigstars = np.array(['ns', '*', '**', '***'])
+    # this will return 0 if the value is larger than the first one
+    j = np.digitize(pvals, siglevels)
     stars = sigstars[j]
-
-    if remove_ns:
-        stars = list(map(lambda x: '' if x=='ns' else x, stars))
-
     return stars
 
-def add_stars(x1, x2, y, h, p, ax, siglevels=np.array([0.05, 10e-10, 10e-40]), col='k'):
+def add_stars2(*args, starty=None, height=0.1, p=None, ax=None, siglevels=np.array([0.05, 10e-10, 10e-40]), col='k', write_p=False):
     '''
+    Function for drawing a bracket to indicate significance between items or to indicate significance of each items.
+    To draw signficance between items, pass two items, lefti, righti, which will be the index of the items.
+    To add a start to each item, pass a list of the positions
     Add stars to the axis denoting significance level.
     Siglevels is the significance levels where p<level to give it a star
+    If write_p = True, then right the p-value on the plot to the right of the stars
     '''
-    sigstars = ['ns', '*', '**', '***']
-    #this will return 0 if the value is larger than the first one
-    j = np.digitize(p, siglevels)
-    stars = sigstars[j]
-    # j = np.digitize(p, siglevels) - 1
-    # if j == -1:
-    #     stars = 'ns'
-    # else:
-    #     stars = sigstars[j]
-    #plot first one
-    ax.plot([x1, x1, x2, x2], [y, y+h, y+h, y], lw=0.75, c=col, alpha=0.5)
-    ax.text((x1+x2)*.5, y+h, stars, ha='center', va='bottom', color=col, alpha=0.5)
+    stars = sig_2_stars(p)
+    if write_p:
+        if p:
+            x = Decimal(p)
+            dec = '{:.2e}'.format(x)
+            stars = f'{stars}p={dec}'
+    box_pos = get_box_coords(ax)
+    if len(args) == 2:
+        leftx = box_pos[lefti]
+        rightx = box_pos[righti]
+        xdata, ydata = [[leftx, leftx, rightx, rightx], [starty, starty+height, starty+height, starty]]
+        line = lines.Line2D(xdata, ydata, lw=0.75, c=col, alpha=0.5)
+        line.set_clip_on(False)
+        ax.add_line(line)
+        # Asterix already seems to be pretty high, if you give it starty, compensates for that.
+        if stars == 'ns':
+            starty += (ax.get_ylim()[-1] - ax.get_ylim()[0])*.03
+        ax.text((leftx+rightx)*.5, starty, stars, ha='center', va='bottom', color=col, alpha=0.5)
+    else:
+        pass
 
-def add_stars2(leftx=None, rightx=None, starty=None, height=0.1, p=None, ax=None, siglevels=np.array([0.05, 10e-10, 10e-40]), col='k'):
+def add_stars(lefti, righti, starty=None, height=0.1, p=None, ax=None, siglevels=np.array([0.05, 10e-10, 10e-40]), col='k', write_p=False):
     '''
-    For version 2, input the 0-based index of the first and the second groups.
+    Input the 0-based index of the first and the second groups to draw the line between (lefti, righti).
     Add stars to the axis denoting significance level.
     Siglevels is the significance levels where p<level to give it a star
     '''
-    sigstars = ['ns', '*', '**', '***']
-    #this will return 0 if the value is larger than the first one
-    j = np.digitize(p, siglevels)
-    stars = sigstars[j]
-    # j = np.digitize(p, siglevels) - 1
-    # if j == -1:
-    #     stars = 'ns'
-    # else:
-    #     stars = sigstars[j]
-    #plot first one
-    ax.plot([leftx, leftx, rightx, rightx], [starty, starty+height, starty+height, starty], lw=0.75, c=col, alpha=0.5)
+    stars = sig_2_stars(p)
+    if write_p:
+        if p:
+            x = Decimal(p)
+            dec = '{:.1e}'.format(x)
+            stars = f'{stars}p={dec}'
+    box_pos = get_box_coords(ax)
+    leftx = box_pos[lefti]
+    rightx = box_pos[righti]
+    xdata, ydata = [[leftx, leftx, rightx, rightx], [starty, starty+height, starty+height, starty]]
+    line = lines.Line2D(xdata, ydata, lw=0.75, c=col, alpha=0.5)
+    line.set_clip_on(False)
+    ax.add_line(line)
     # Asterix already seems to be pretty high, if you give it starty, compensates for that.
+    star_vals = ['*', '**', '***', '****']
+    if stars not in star_vals:
+        starty += (ax.get_ylim()[-1] - ax.get_ylim()[0])*.03
     ax.text((leftx+rightx)*.5, starty, stars, ha='center', va='bottom', color=col, alpha=0.5)
 
 def change_from_t0(df):
@@ -424,11 +449,6 @@ def change_from_t0(df):
     new_df = pd.DataFrame(change_dict)
     return new_df
 
-'''
-Timecourse plotting functions
-See discussion in NMJ_fig_planning for how to represent error on log scale
-1/ln(2) * y_err/y = y_err/(ln(2)*y)
-'''
 #From F2, save this one
 def extract_gene_vals(gene_id, val_df, var_df, tpts, label):
     '''If gene is not found return empty df.'''
@@ -490,27 +510,6 @@ def extract_gene_vals_reps(gene_id, val_df, label):
         return df
     return df
 
-'''
-#From F1
-#See discussion in NMJ_fig_planning for how to represent error on log scale
-#1/ln(2) * y_err/y = y_err/(ln(2)*y)
-def extract_gene_vals(gene_id, val_df, var_df):
-    y = val_df.loc[gene_id]
-    y_var = var_df.loc[gene_id]
-    y_sd = np.sqrt(y_var)
-    y_vals = []
-    y_errs = []
-    #if the value from the first point is divided by itself, then it's not independent
-    #what is the correct way to calculate error in such a case?
-    for i in range(0, len(y)):
-        y_val = y[i]/y[0]
-        y_err = y_val*np.sqrt((y_sd[i]/y[i])**2 + (y_sd[0]/y[0])**2)
-        rel_err = y_err/(math.log(2)*y_val)
-        y_vals.append(math.log(y_val, 2))
-        y_errs.append(rel_err)
-
-    return y_vals, y_errs
-'''
 
 #For F2
 def plot_gene_tc(plot_df, title, ax = '', y_label = '', y_loc = None):
@@ -654,6 +653,21 @@ def calculate_overlap(set1, set2, bg_num):
     pval = hypergeom.sf(x-1, M, n, N)
     return pval
 
+def calc_hypergeom(subset, bg, N_subset, N_bg):
+    '''
+    Get the hypergeometric p-value for overlap
+    subset = number hits in subset
+    bg = number hits in bg
+    N_subset = total number in the subset
+    N_bg = total number in the bg
+    hypergeom.sf is equivalent to 1 - hypergoem.cdf
+    '''
+
+    pval = hypergeom.sf(subset-1, N_bg, bg, N_subset)
+    # Gives equivalent result:
+    # pval = hypergeom.sf(subset-1, N_bg, bg, N_subset)
+    return pval
+
 def retrieve_file(address, outfile):
     '''
     If url, download. If file, move it to the new location.
@@ -677,31 +691,6 @@ def gunzip(infile):
         with open(infile.rstrip('.gz'), 'wb') as f_out:
             shutil.copyfileobj(f_in, f_out)
     os.remove(infile)
-'''
-#This is for F1, different enough that it makes sense to save separately
-def plot_gene_tc(gene_id, gene_symbol, cluster_info, ax):
-    #Remove error bars from the legend
-    #https://stackoverflow.com/questions/14297714/matplotlib-dont-show-errorbars-in-legend
-    syn_vals, syn_err = extract_gene_vals(gene_id, syn_rates, syn_var)
-    tot_vals, tot_err = extract_gene_vals(gene_id, tot_levels, tot_var)
-    #fig = plt.figure()
-    #ax = fig.add_subplot(111)
-    #ax.plot(xvals, syn_vals, y_err = syn_err)
-    #transcription = transcription rate
-    #total RNA = total RNA level
-    ax.errorbar(xvals, syn_vals, yerr = syn_err, capsize = 5, label = 'transcription')
-    ax.errorbar(xvals, tot_vals, yerr = tot_err, capsize = 5, label = 'total RNA')
-    #ax.plot(xvals, pd.Series(0).append(tot_vals))
-    ax.set_ylabel('log'r'$_{2}$' ' fold change')
-    ax.set_xlabel('hrs after onset of activation')
-    #'$\it{text you want to show in italics}$'
-    ax.set_title('$\it%s$ %s' % (gene_symbol, cluster_info))
-    ax.xaxis.set_major_locator(plticker.MultipleLocator(base=1.0))
-    allvals = syn_vals + tot_vals
-    valrange = max(allvals) - min(allvals)
-    if valrange < 1:
-        ax.yaxis.set_major_locator(plticker.MultipleLocator(base=0.5))
-    if valrange > 1:
-        ax.yaxis.set_major_locator(plticker.MultipleLocator(base=1.0))
-    return ax
-'''
+
+def hell():
+    pass

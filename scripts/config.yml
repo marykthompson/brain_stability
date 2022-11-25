@@ -4,6 +4,8 @@ results_dir: ../../brain_results/300522_run/
 results_dir_inctest: ../../brain_results/220722_inctest_run/
 results_dir_pherson: ../../brain_results/270722_pherson/
 inspect_dir: ../../brain_results/300522_run/inspect/
+pherson_dir: /Users/mk/Desktop/Davislab_old/C3.1_stability_pathway_analysis/polycomb_targets/pherson_dros_cells/
+geo_outdir: ../Figures/GEO_files/
 #this database doesn't have the ERCCs, only the SIRVs
 gffutils_db: ../../resources/dmel_628_elex.db
 out_fmt: 'png'
