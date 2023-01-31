@@ -37,6 +37,24 @@ def parse_ann_file(ID_file):
             con_dict[i['primary_FBgn#']] = set([i['primary_FBgn#']])
     return con_dict, sym_dict
 
+def find_best_version(genelist, version_files=[], id_type='symbol'):
+    '''
+    Scan versions to find out which annotation version best matches symbols attached to an unknown genome version.
+    Version_files should be a list of tuples [('dmel630', dmel630_file), ....]
+    '''
+    count_dict = {}
+    for file in version_files:
+        conn_dict, sym_dict = parse_ann_file(file[1])
+        if id_type == 'symbol':
+            not_found = set(genelist).difference(sym_dict.values())
+        if id_type == 'FB':
+            not_found = set(genelist).difference(conn_dict.keys())
+        count_dict[file[0]] = len(not_found)
+    
+    key_min = min(count_dict.keys(), key=lambda k: count_dict[k])
+    print(f'min num genes not found {count_dict[key_min]}')
+    return key_min, count_dict, not_found
+
 def update_ids(to_anns, from_version='', id_type='FB', genes=None):
     '''
     geneset is an iterable of genes to convert. Otherwise convert all the old IDs
@@ -47,6 +65,7 @@ def update_ids(to_anns, from_version='', id_type='FB', genes=None):
     from_anns and to_anns should be the fbgn_annotation_ID_fb_*_*.tsv file.
     First convert symbol to id if id_type == 'symbol'
     Also add option to not have from_anns, useful if it's not known.
+    How would we covert backwards? Newer to older?
     '''
     # In order for this to work properly, the to_anns MUST be more recent than the from anns
     int_v = lambda x: '_'.join(x.strip('.tsv').split('_')[-2:])
@@ -62,21 +81,19 @@ def update_ids(to_anns, from_version='', id_type='FB', genes=None):
     if from_version != '':
         # get the old symbols as well
         old_ids, old_sym = parse_ann_file(from_version)
-
+        # If no gene group specified for conversion, populate with all genes in the file
+        if genes is None:
+            # Get all the values of the old_ids dictionary
+            genes = set().union(*old_ids.values())
         if id_type == 'symbol':
             sym2id = {v:k for k,v in old_sym.items()}
             genes = [sym2id[i] if i in sym2id else i for i in genes]
-        # If no gene group specified for conversion, populate with all genes in the file
-        if not genes:
-            # Get all the values of the old_ids dictionary
-            genes = set().union(*old_ids.values())
     else:
         if id_type == 'symbol':
             raise Exception('symbol mapping cannot be used with unspecified from version')
 
     # ensure the genes are unique, otherwise they will appear as split annotations
     genes = set(genes)
-
     rows = []
     for i in genes:
         res = []
@@ -93,6 +110,7 @@ def update_ids(to_anns, from_version='', id_type='FB', genes=None):
         df['old_sym'] = df.index.map(old_sym)
         # report ones not found, i.e. no old symbol.
         # Implies that genome version supplied by the user for the old IDs is incorrect
+        # print('not found', df[pd.isnull(df['old_sym'])])
         n_notfound = len(df[pd.isnull(df['old_sym'])])
         print('number of gene symbols not found in old version = %s' % n_notfound)
 

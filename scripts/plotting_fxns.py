@@ -16,6 +16,7 @@ import seaborn as sns
 import matplotlib.pyplot as plt
 from stats_helpers import calc_fisher_exact
 from decimal import Decimal
+import matplotlib.colors as colors
 
 from plot_helpers import *
 
@@ -35,13 +36,13 @@ def get_box_coords(ax):
             x_pos.append(x)
     return x_pos
 
-def get_letter_height(ax, fig):
+def get_letter_height(ax, fig, fontsize=7):
     '''
     Return the height of the letter "R" in data coordinates.
     This can be used to place text and compensate for issues like baseline offsets with asterisks.
     '''
     # Hack to adjust the height of the asterisks to correct baseline
-    t = ax.text(0.5, 0.5, 'R')
+    t = ax.text(0.5, 0.5, 'R', fontsize=fontsize)
     r = fig.canvas.get_renderer()
     bb = t.get_window_extent(renderer=r)
     text_height = bb.height
@@ -56,16 +57,14 @@ def get_letter_height(ax, fig):
     # print('total_height', total_height)
     # This is the height of the letter R in the axis units
     R_height = text_height/ax_height
-    print('rh', R_height)
     # To get the height in data units
     R_h_data = R_height*data_range
-    print('data range', data_range)
     del ax.texts[-1]
-    print('rh data', R_h_data)
     return R_h_data
 
 def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_name=None, order=None, y_excluded=[], test_y=None,
-                 x_lab=None, y_lab=None, add_n_numbers=True, ax=None):
+                 x_lab=None, y_lab=None, add_n_numbers=True, ax=None, fig=None, s=3, palette=[color_dict['grey'], color_dict['blue']], 
+                 enrich_hm=True, cbar_lab_sp=5, hm_lstart=0.65, **kwargs):
     '''
     Plot single-cell sequencing data with specific gene class overlaid.
     all_genes = df containing values for all genes (even unplotted ones). Used to compare to the groups in data.
@@ -75,30 +74,86 @@ def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_nam
     * in the function definition means that every following argument must have
     a keyword.
     y_excluded is a list of categories to leave out of the plot. For example, if bg or none is included in the df.
+    This version has a hack to get tthe points with hue to plot on top of the background points
+    I cannot figure out how to get the axis to update dynamically with jupyter, so just going to plot both and save the second one
+    https://stackoverflow.com/questions/39658717/plot-dynamically-changing-graph-using-matplotlib-in-jupyter-notebook
+    To get around this, I pass the figure (which has the size I want), copy it and put a new axis on the copied figure
     '''
 
     if order is None:
         order = data.groupby(y)[x].median().sort_values().index
+        # a = (order > 50).values
+        # np.argmax(a)
     order2 = [i for i in order if i not in y_excluded]
 
     if ax is None:
         ax = plt.gca()
 
-    ax = sns.swarmplot(data=data, x=x, y=y, order=order2, orient='h', hue=hue, hue_order=[False, True],
-                       palette=[color_dict['grey'], color_dict['blue']], s=1, ax=ax)
-    ax.text(0.5, 1, hue_name, transform=ax.transAxes, color=color_dict['blue'], ha='center')
-    ax.get_legend().remove()
+    # Drop the categories in y_excluded
+    data = data.query(f'{y}!=@y_excluded')
+
+    # First use seaborn swarm to get the jitter positions for the data
+    ax1 = sns.swarmplot(data=data, x=x, y=y, order=order2, orient='h', hue=hue, hue_order=[False, True],
+                       palette=palette, ax=ax, s=2, **kwargs)
+
+    # hack to get the attributes for the figure and the axis and replot
+    figx, figy = fig.bbox.x1/100, fig.bbox.y1/100
+    left_x = ax1.bbox.x0/fig.bbox.x1
+    bottom_y = ax1.bbox.y0/fig.bbox.y1
+    width = ax1.bbox.x1/fig.bbox.x1 - left_x
+    height = ax1.bbox.y1/fig.bbox.y1 - bottom_y
+    axes = (left_x, bottom_y, width, height)
+
+    fig = plt.figure(figsize=(figx,figy))
+    ax = fig.add_axes(axes)
+
+    hue_rgba = colors.to_rgba(palette[1])
+    i = 0
+    bg_data_all = []
+    colored_data_all = []
+    for c in ax1.collections:
+        # Filter out collections which are not scatterplots
+        if c.get_offsets().shape[0] > 0:
+            a_colors = c.get_fc()
+            a_offsets = c.get_offsets()
+            colored_idx = np.where((a_colors == hue_rgba).all(axis=1))[0]
+            colored_data = a_offsets[colored_idx]
+
+            mask = np.ones(a_offsets.shape[0], dtype=bool)
+            mask[colored_idx] = False
+            bg_data = a_offsets[mask]
+            assert bg_data.shape[0] + colored_data.shape[0] == a_offsets.shape[0]
+            bg_data_all.append(bg_data)
+            colored_data_all.append(colored_data)
+            i+= 1
+
+    # Replot data with the hue colors on top:
+    n_datasets = len(bg_data_all)
+    # e.g. (16.7, -0.7), but this stretches the heatmap out a little bit
+    # ax.set_ylim(n_datasets - 1 + 0.7, -0.7)
+    ax.set_ylim(n_datasets - 1 + 0.5, -0.5)
+
+    ax.yaxis.set_major_locator(plticker.MultipleLocator(base=1.0))
+    for i in range(len(bg_data_all)):
+        ax.scatter(bg_data_all[i][:,0], bg_data_all[i][:,1], color=palette[0], s=s)
+        ax.scatter(colored_data_all[i][:,0], colored_data_all[i][:,1], color=palette[1], s=s)
+
+    # ticks have to be set after plotting, otherwise they get re-set by subsequent plotting
+    ax.set_yticks(range(0, n_datasets))
 
     _ = ax.set_xlabel(x_lab)
     _ = ax.set_ylabel(y_lab)
 
-    ax.text(0.5, 1, hue_name, transform=ax.transAxes, color=color_dict['blue'], ha='center')
+    ax.text(0.5, 1, hue_name, transform=ax.transAxes, color=palette[-1], ha='center', weight='bold')
 
     # Add the gene numbers to the cell type genes
     if add_n_numbers:
         gene_nums = data[y].value_counts().loc[order2].values
         new_labels = ['%s (%s)' % (i, j) for i,j in zip(order2, gene_nums)]
         ax.set_yticklabels(new_labels)
+    
+    else:
+        ax.set_yticklabels(order2)
 
     # Get p-values for the comparison of deg rates between the cell type group and the other genes
     p_vals = []
@@ -114,23 +169,23 @@ def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_nam
     stars = np.where(stars=='ns', '', stars)
 
     # Put p_vals on the y-axis for having sig. difference to the stability of the other groups
-    letter_h = get_letter_height(ax, plt.gcf())
-    print('letter h', letter_h)
+    fontsize = 10
+    letter_h = get_letter_height(ax, plt.gcf(), fontsize=fontsize)
     for i in range(0, len(stars)):
-        # ax.text(110, i+0.2, stars[i], ha='center', va='center')
-        # This one needed to align Fig. 4. Need to figure out why the asterisks aren't quite lining up right.
-        # * is written as superscript in a lot of fonts
-        # ax.text(110, row.height-letter_h*0.8, row.stars, ha='center', va=row.align, color='k', alpha=0.5, transform=ax.transData)
-        # Because indexing goes from top to bottom of plot, need to add the letter height to put it lower
-        ax.text(110, i+letter_h*0.8, stars[i], ha='center', va='bottom')
+        ax.text(110, i+letter_h*0.8, stars[i], ha='center', va='bottom', weight='bold', fontsize=fontsize)
 
-        # ax.text(110, i+0.1, stars[i], ha='center', va='center')
+    res_tf = None
+    if enrich_hm:
+        # prev, lstart=0.65
+        res_tf = enrich_heatmap(data=data, all_genes=all_genes, x='stab_percentile', y=y, hue=['TF'], y_lab1='fraction of genes',
+                   y_lab2='-log'r'$_{10}$'' p-value', hstart=bottom_y, lstart=hm_lstart, fig=fig, xticklabs1=['counts'], 
+                   xticklabs2=['enrichment'], hm_xlab=False, order=order2, cbar_lab_sp=cbar_lab_sp)
 
-    return ax
+    return ax, res_tf
 
 def enrich_heatmap(data=None, all_genes=None, x=None, y=None, hue=None, hue_name=None, test_y=None, x_lab=None, y_lab1=None,
-                   y_lab2=None, xticklabs1=['counts'], xticklabs2=['enrichment'], fig=None, lstart=0.68, hstart=0.15, hm_width=0.06, cb_width=0.03,
-                   ylabels=False, hm_xlab=True, order=None, cbar_lab_sp=4.5):
+                   y_lab2=None, xticklabs1=['counts'], xticklabs2=['enrichment'], fig=None, lstart=0.68, hstart=0.15, hm_width=0.06, 
+                   cb_width=0.03, ylabels=False, hm_xlab=True, order=None, cbar_lab_sp=4.5):
     '''
     Plot fraction of group and enrichment stats.
     Generally this will be plotted to the right side of the swarmplot.
@@ -380,36 +435,6 @@ def sig_2_stars(pvals, siglevels=np.array([0.05, 10e-10, 10e-40]), tex=False):
     stars = sigstars[j]
     return stars
 
-def add_stars2(*args, starty=None, height=0.1, p=None, ax=None, siglevels=np.array([0.05, 10e-10, 10e-40]), col='k', write_p=False):
-    '''
-    Function for drawing a bracket to indicate significance between items or to indicate significance of each items.
-    To draw signficance between items, pass two items, lefti, righti, which will be the index of the items.
-    To add a start to each item, pass a list of the positions
-    Add stars to the axis denoting significance level.
-    Siglevels is the significance levels where p<level to give it a star
-    If write_p = True, then right the p-value on the plot to the right of the stars
-    '''
-    stars = sig_2_stars(p)
-    if write_p:
-        if p:
-            x = Decimal(p)
-            dec = '{:.2e}'.format(x)
-            stars = f'{stars}p={dec}'
-    box_pos = get_box_coords(ax)
-    if len(args) == 2:
-        leftx = box_pos[lefti]
-        rightx = box_pos[righti]
-        xdata, ydata = [[leftx, leftx, rightx, rightx], [starty, starty+height, starty+height, starty]]
-        line = lines.Line2D(xdata, ydata, lw=0.75, c=col, alpha=0.5)
-        line.set_clip_on(False)
-        ax.add_line(line)
-        # Asterix already seems to be pretty high, if you give it starty, compensates for that.
-        if stars == 'ns':
-            starty += (ax.get_ylim()[-1] - ax.get_ylim()[0])*.03
-        ax.text((leftx+rightx)*.5, starty, stars, ha='center', va='bottom', color=col, alpha=0.5)
-    else:
-        pass
-
 def add_stars(lefti, righti, starty=None, height=0.1, p=None, ax=None, siglevels=np.array([0.05, 10e-10, 10e-40]), col='k', write_p=False):
     '''
     Input the 0-based index of the first and the second groups to draw the line between (lefti, righti).
@@ -435,239 +460,6 @@ def add_stars(lefti, righti, starty=None, height=0.1, p=None, ax=None, siglevels
         starty += (ax.get_ylim()[-1] - ax.get_ylim()[0])*.03
     ax.text((leftx+rightx)*.5, starty, stars, ha='center', va='bottom', color=col, alpha=0.5)
 
-def change_from_t0(df):
-    '''
-    Return a dataframe with the ratio between each timepoint
-    and the first column (t0).
-    '''
-    cols = df.columns
-    change_dict = {}
-    for i in range(1, len(cols)):
-        name = cols[i]
-        change = df[cols[i]]/df[cols[0]]
-        change_dict[name] = change
-    new_df = pd.DataFrame(change_dict)
-    return new_df
-
-#From F2, save this one
-def extract_gene_vals(gene_id, val_df, var_df, tpts, label):
-    '''If gene is not found return empty df.'''
-    try:
-        y = val_df.loc[gene_id]
-        y_var = var_df.loc[gene_id]
-        y_sd = np.sqrt(y_var)
-        y_vals = []
-        y_errs = []
-        #if the value from the first point is divided by itself, then it's not independent
-        #what is the correct way to calculate error in such a case?
-        for i in range(0, len(y)):
-            y_val = y[i]/y[0]
-            y_err = y_val*np.sqrt((y_sd[i]/y[i])**2 + (y_sd[0]/y[0])**2)
-            rel_err = y_err/(math.log(2)*y_val)
-            if y_val != 0:
-                y_vals.append(math.log(y_val, 2))
-            else:
-                y_vals.append(math.log(0.001, 2))
-            y_errs.append(rel_err)
-
-        df = pd.DataFrame({'vals':y_vals, 'err': y_errs, 'tpts':tpts, 'label': label})
-        df.set_index('label', inplace = True)
-    except KeyError:
-        df = pd.DataFrame(columns=['vals', 'err', 'tpts', 'label'])
-        df.set_index('label', inplace=True)
-        return df
-    return df
-
-def extract_gene_vals_reps(gene_id, val_df, label):
-    '''If gene is not found return empty df. This version take all the values from the replicates'''
-    tpts = [float(i.split('_')[1]) for i in val_df.columns.values]
-
-    try:
-        y = val_df.loc[gene_id].mean()
-        print('y', y)
-        y_sd = val_df.loc[gene_id].std()
-        print('ysd', y_sd)
-        y_vals = []
-        y_errs = []
-        #if the value from the first point is divided by itself, then it's not independent
-        #what is the correct way to calculate error in such a case?
-        for i in range(0, len(y)):
-            y_val = y[i]/y[0]
-            y_err = y_val*np.sqrt((y_sd[i]/y[i])**2 + (y_sd[0]/y[0])**2)
-            print('yerr', y_err)
-            rel_err = y_err/(math.log(2)*y_val)
-            print('relerr', rel_err)
-            if y_val != 0:
-                y_vals.append(math.log(y_val, 2))
-            else:
-                y_vals.append(math.log(0.001, 2))
-            y_errs.append(rel_err)
-        df = pd.DataFrame({'vals':y_vals, 'err': y_errs, 'tpts':tpts, 'label': label})
-        df.set_index('label', inplace = True)
-    except KeyError:
-        df = pd.DataFrame(columns=['vals', 'err', 'tpts', 'label'])
-        df.set_index('label', inplace=True)
-        return df
-    return df
-
-
-#For F2
-def plot_gene_tc(plot_df, title, ax = '', y_label = '', y_loc = None):
-    '''
-    Plot values over the timecourse. plot_df should be indexed by series name.
-    Plot_df columns = tpts, vals, err.
-    https://matplotlib.org/3.1.1/api/_as_gen/matplotlib.axes.Axes.errorbar.html
-    Remove error bars from the legend:
-    https://stackoverflow.com/questions/14297714/matplotlib-dont-show-errorbars-in-legend
-    Set y-axis spacing with y_loc, 0.5 for Fig. 1
-    '''
-    for i in plot_df.index.unique():
-        to_plot = plot_df.loc[i]
-        ax.errorbar(to_plot['tpts'], to_plot['vals'], yerr = to_plot['err'], label = i)
-        #ax.errorbar(to_plot['tpts'], to_plot['vals'], yerr = to_plot['err'], capsize = 5, capthick = 0.75, elinewidth = 0.75, label = i)
-        #ax.errorbar(to_plot['tpts'], to_plot['vals'], yerr = to_plot['err'], capsize = 5, elinewidth = matplotlib.rcParams['lines.linewidth'], label = i)
-    ax.set_ylabel(y_label)
-    ax.set_xlabel('hrs after onset of activation')
-    #'$\it{text you want to show in italics}$'
-    ax.set_title(title)
-
-    # get handles
-    handles, labels = ax.get_legend_handles_labels()
-    # remove the errorbars
-    handles = [h[0] for h in handles]
-    # use them in the legend
-    #ax.legend(handles, labels, loc='upper left')
-    #If not enough room to center the legend over the plot, then it looks better aligned to right
-    #ax.legend(handles, labels, loc = 'lower center', bbox_to_anchor = (0.5, 1.0), handlelength = 0.75, ncol = 2, handletextpad = 0.5, columnspacing = 1)
-    ax.legend(handles, labels, loc = 'lower right', bbox_to_anchor = (1.0, 1.03), ncol = 2, borderaxespad = 0)
-    #borderaxespad is the arg that says how far away to put from axis. default is 0.5. Set to 0 to align with right
-    ax.xaxis.set_major_locator(plticker.MultipleLocator(base=1.0))
-    if y_loc is not None:
-        ax.yaxis.set_major_locator(plticker.MultipleLocator(base=y_loc))
-    return ax
-
-def plot_gene_tc2(plot_df, title, ax = '', y_label = '', y_loc = None):
-    '''
-    Plot values over the timecourse. plot_df should be indexed by series name.
-    Plot_df columns = tpts, vals, err.
-    https://matplotlib.org/3.1.1/api/_as_gen/matplotlib.axes.Axes.errorbar.html
-    Remove error bars from the legend:
-    https://stackoverflow.com/questions/14297714/matplotlib-dont-show-errorbars-in-legend
-    Set y-axis spacing with y_loc, 0.5 for Fig. 1
-    '''
-    for i in plot_df.index.unique():
-        to_plot = plot_df.loc[i]
-        ax.errorbar(to_plot['tpts'], to_plot['vals'], yerr = to_plot['err'], label = i)
-        #ax.errorbar(to_plot['tpts'], to_plot['vals'], yerr = to_plot['err'], capsize = 5, capthick = 0.75, elinewidth = 0.75, label = i)
-        #ax.errorbar(to_plot['tpts'], to_plot['vals'], yerr = to_plot['err'], capsize = 5, elinewidth = matplotlib.rcParams['lines.linewidth'], label = i)
-    ax.set_ylabel(y_label)
-    ax.set_xlabel('hrs after onset of activation')
-    #'$\it{text you want to show in italics}$'
-    ax.set_title(title)
-
-    # get handles
-    handles, labels = ax.get_legend_handles_labels()
-    # remove the errorbars
-    handles = [h[0] for h in handles]
-    # use them in the legend
-    #ax.legend(handles, labels, loc='upper left')
-    #If not enough room to center the legend over the plot, then it looks better aligned to right
-    #ax.legend(handles, labels, loc = 'lower center', bbox_to_anchor = (0.5, 1.0), handlelength = 0.75, ncol = 2, handletextpad = 0.5, columnspacing = 1)
-    ax.legend(handles, labels, loc = 'lower right', bbox_to_anchor = (1.0, 1.03), ncol = 2, borderaxespad = 0)
-    #borderaxespad is the arg that says how far away to put from axis. default is 0.5. Set to 0 to align with right
-    ax.xaxis.set_major_locator(plticker.MultipleLocator(base=1.0))
-    if y_loc is not None:
-        ax.yaxis.set_major_locator(plticker.MultipleLocator(base=y_loc))
-    return ax
-
-
-def update_old_ids(genes, con_dict, as_set=False):
-    '''
-    Update ID set from old version of Flybase to the version in use.
-    If we need to use a dataset with a newer version of Flybase, then it might make sense to update both to the current version
-    genes = set of genes to convert
-    con_dict = dictionary of old_ID: set of new IDs that can map to it
-    if as_set, return genes as a set
-    '''
-    converted_genes = []
-    for i in genes:
-        for j in con_dict[i]:
-            converted_genes.append(j)
-    if as_set:
-        converted_genes = set(converted_genes)
-    return converted_genes
-
-def update_old_ids_dict(genes, con_dict, discard_split=False, discard_merge=False):
-    '''
-    Update an ID set from old version of Flybase to the version in use.
-    Note that it's possible to have both one-> many and many->one relationships
-    Nest the results inside a list so that we can use pandas explode() to convert
-    one->many mapping to multiple rows
-    Return a dataframe mapping old_ID -> new_ID
-    If discard_split == True, remove genes which now map to multiple new genes
-    If discard_merge == True, remove genes which map to multiple old genes (does this class exist?)
-    '''
-    converted_genes = defaultdict(list)
-    for i in genes:
-        res = []
-        for j in con_dict[i]:
-            res.append(j)
-        converted_genes[i] = [res]
-    df = pd.DataFrame.from_dict(converted_genes, orient='index', columns=['new_ID'])
-    df = df.explode('new_ID')
-    n_split = len(df[df.index.duplicated(keep=False)])
-    n_merge = len(df[df['new_ID'].duplicated(keep=False)].dropna())
-    print('number of split genes = %s' % n_split)
-    print('number of merge genes = %s' % n_merge)
-    return df
-    #return converted_genes
-
-def update_old_ids_string(genes, con_dict):
-    '''
-    Update an ID set from old version of Flybase to the version in use.
-    Note that it's possible to have both one-> many and many->one relationships
-    For this version, make into a string list so that I can use pandas explode()
-    '''
-    converted_genes = defaultdict()
-    for i in genes:
-        res = []
-        for j in con_dict[i]:
-            res.append(j)
-        converted_genes[i] = ','.join(res)
-    return converted_genes
-
-def calculate_overlap(set1, set2, bg_num):
-    '''
-    Test overlap of two gene lists with hypergeometric test
-    M is the population size (previously N)
-    n is the number of successes in the population (previously K)
-    N is the sample size (previously n)
-    X is still the number of drawn “successes”.
-    checked some results here:
-    https://systems.crump.ucla.edu/hypergeometric/index.php
-    '''
-    M = bg_num
-    n = len(set1)
-    N = len(set2)
-    x = len(set1.intersection(set2))
-    pval = hypergeom.sf(x-1, M, n, N)
-    return pval
-
-def calc_hypergeom(subset, bg, N_subset, N_bg):
-    '''
-    Get the hypergeometric p-value for overlap
-    subset = number hits in subset
-    bg = number hits in bg
-    N_subset = total number in the subset
-    N_bg = total number in the bg
-    hypergeom.sf is equivalent to 1 - hypergoem.cdf
-    '''
-
-    pval = hypergeom.sf(subset-1, N_bg, bg, N_subset)
-    # Gives equivalent result:
-    # pval = hypergeom.sf(subset-1, N_bg, bg, N_subset)
-    return pval
-
 def retrieve_file(address, outfile):
     '''
     If url, download. If file, move it to the new location.
@@ -692,5 +484,14 @@ def gunzip(infile):
             shutil.copyfileobj(f_in, f_out)
     os.remove(infile)
 
-def hell():
-    pass
+def diagonal_cuts(top_ax, bottom_ax, d=0.015):
+    '''
+    Draw diagonal lines to split the axis.
+    https://stackoverflow.com/questions/63726234/how-to-draw-a-broken-y-axis-catplot-graphes-with-seaborn
+    '''
+    sns.despine(ax=top_ax, bottom=True)
+    top_ax.set_xticks([])
+    kwargs = dict(transform=top_ax.transAxes, color='k', clip_on=False)
+    top_ax.plot((-d, +d), (-d, +d), **kwargs)
+    kwargs.update(transform=bottom_ax.transAxes)
+    bottom_ax.plot((-d, +d), (1 - d, 1 + d), **kwargs)

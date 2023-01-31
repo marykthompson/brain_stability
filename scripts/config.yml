@@ -1,12 +1,10 @@
 #Parameters for the
-#results_dir: /Users/maryk.thompson/Desktop/Davislab/OneDriveNexus365/3.4_NMJ_4Tu_4sU/3.4e_pipeline_dev/
-results_dir: ../../brain_results/300522_run/
-results_dir_inctest: ../../brain_results/220722_inctest_run/
-results_dir_pherson: ../../brain_results/270722_pherson/
-inspect_dir: ../../brain_results/300522_run/inspect/
+results_dir: ../../brain_results/301122_brain_foursu/
+results_dir_inctest: ../../brain_results/301122_brain_inctest/
+results_dir_pherson: ../../brain_results/301122_BG3_ph/
+inspect_dir: ../../brain_results/301122_brain_foursu/inspect/
 pherson_dir: /Users/mk/Desktop/Davislab_old/C3.1_stability_pathway_analysis/polycomb_targets/pherson_dros_cells/
 geo_outdir: ../Figures/GEO_files/
-#this database doesn't have the ERCCs, only the SIRVs
 gffutils_db: ../../resources/dmel_628_elex.db
 out_fmt: 'png'
 out_dpi: 300
