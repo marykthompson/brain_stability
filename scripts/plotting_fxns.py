@@ -495,3 +495,47 @@ def diagonal_cuts(top_ax, bottom_ax, d=0.015):
     top_ax.plot((-d, +d), (-d, +d), **kwargs)
     kwargs.update(transform=bottom_ax.transAxes)
     bottom_ax.plot((-d, +d), (1 - d, 1 + d), **kwargs)
+
+def colval_fmt(colval):
+    '''
+    Pandas needs the column value to have surrounding quotes "" if a string and not if True/False
+    '''
+    if isinstance(colval, bool):
+        return colval
+    else:
+        return f'"{colval}"'
+
+def colname_fmt(colname):
+    if len(colname.split(' ')) > 1:
+        return f'`{colname}`'
+    else:
+        return colname
+    
+def get_group_Ns(df, x, hue=None, order=[False, True], hue_order=[False, True], ticklabels=None):
+    '''
+    Return the n-numbers for the groups in the plot
+    Specify the order and hue_order if not [False, True]
+    '''
+    res = []
+    if hue is None:
+        for i in order:
+            l = [(x, i)]
+            query_str = '&'.join([f'{colname_fmt(p[0])}=={colval_fmt(p[1])}' for p in l])
+            n_i = len(df.query(query_str))
+            res.append(n_i)
+    else:
+        for i in order:
+            hue_vals = []
+            for j in hue_order:
+                l = [(x, i), (hue, j)]
+                query_str = '&'.join([f'{colname_fmt(p[0])}=={colval_fmt(p[1])}' for p in l])
+                n_i = len(df.query(query_str))
+                hue_vals.append(n_i)
+            res.append(tuple(hue_vals))
+
+    if ticklabels is None:
+        return res
+    
+    else:
+        new_labels = [f'{i[0]}\nn = {i[1]}' for i in zip(ticklabels, res)]
+        return new_labels
