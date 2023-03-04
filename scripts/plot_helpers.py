@@ -2,6 +2,7 @@
 # Define colors and plot helper functions
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import matplotlib.ticker as plticker
 import seaborn as sns
 import yaml
 import os

@@ -55,13 +55,12 @@ def get_letter_height(ax, fig, fontsize=7):
     del ax.texts[-1]
     return R_h_data
 
-def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_name=None, order=None, y_excluded=[], test_y=None,
+def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_name=None, order=None, y_excluded=[],
                  x_lab=None, y_lab=None, add_n_numbers=True, ax=None, fig=None, s=3, palette=[color_dict['grey'], color_dict['blue']], 
                  enrich_hm=True, cbar_lab_sp=5, hm_lstart=0.65, **kwargs):
     '''
     Plot single-cell sequencing data with specific gene class overlaid.
     all_genes = df containing values for all genes (even unplotted ones). Used to compare to the groups in data.
-    test_y = the name of the y_var to use for statistical testing between groups.
     Show p-values for half-lives being different.
     Show p-values for enrichment of gene values in the group.
     * in the function definition means that every following argument must have
@@ -75,8 +74,6 @@ def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_nam
 
     if order is None:
         order = data.groupby(y)[x].median().sort_values().index
-        # a = (order > 50).values
-        # np.argmax(a)
     order2 = [i for i in order if i not in y_excluded]
 
     if ax is None:
@@ -122,8 +119,6 @@ def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_nam
 
     # Replot data with the hue colors on top:
     n_datasets = len(bg_data_all)
-    # e.g. (16.7, -0.7), but this stretches the heatmap out a little bit
-    # ax.set_ylim(n_datasets - 1 + 0.7, -0.7)
     ax.set_ylim(n_datasets - 1 + 0.5, -0.5)
 
     ax.yaxis.set_major_locator(plticker.MultipleLocator(base=1.0))
@@ -169,14 +164,13 @@ def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_nam
 
     res_tf = None
     if enrich_hm:
-        # prev, lstart=0.65
         res_tf = enrich_heatmap(data=data, all_genes=all_genes, x='stab_percentile', y=y, hue=['TF'], y_lab1='fraction of genes',
                    y_lab2='-log'r'$_{10}$'' p-value', hstart=bottom_y, lstart=hm_lstart, fig=fig, xticklabs1=['counts'], 
                    xticklabs2=['enrichment'], hm_xlab=False, order=order2, cbar_lab_sp=cbar_lab_sp)
 
     return ax, res_tf, p_vals
 
-def enrich_heatmap(data=None, all_genes=None, x=None, y=None, hue=None, hue_name=None, test_y=None, x_lab=None, y_lab1=None,
+def enrich_heatmap(data=None, all_genes=None, x=None, y=None, hue=None, y_lab1=None,
                    y_lab2=None, xticklabs1=['counts'], xticklabs2=['enrichment'], fig=None, lstart=0.68, hstart=0.15, hm_width=0.06, 
                    cb_width=0.03, ylabels=False, hm_xlab=True, order=None, cbar_lab_sp=4.5):
     '''
@@ -269,7 +263,6 @@ def enrich_heatmap(data=None, all_genes=None, x=None, y=None, hue=None, hue_name
     ax3.set_ylabel(y_lab2)
 
     # fig.align_ylabels() # doesn't seem to work with labels on the right
-
     ax3.yaxis.set_label_coords(cbar_lab_sp, 0.5)
     ax4.yaxis.set_label_coords(cbar_lab_sp, 0.5)
     arrays['order'] = order
@@ -297,9 +290,6 @@ class PrettyBox(object):
             line.set_color('k')
             line.set_lw(lw)
         # Need to replot legend to add the transparent colors
-        # No artists with labels found to put in legend.  
-        # Note that artists whose label start with an underscore are ignored when legend() is called with no argument.
-        # How can we find out if any of the artists have labels?
         handles, labels = ax.get_legend_handles_labels()
         if handles != []:
             if 'hue' in kwargs:
@@ -322,21 +312,19 @@ class Connector:
         self.top += self.gap
 
 def compare_experiments(df, experiments=None, id_col=None, val_col=None, other_cols=[], pseudo=0, 
-                         read_col='summed_est_counts', log=True):
+                        log=True):
     '''
     df is a "flat" dataframe with only one index level and the id_val in the columns
     experiments is a list of dictionaries with columns specifying the experiment and data labels,
     position 0 will be the x, position 1 will be the y
     i.e. [{'RNAtype':'input', 'condition':'ph'}, {'RNAtype':'input', 'condtion':'mock'}]
     if pseduo='min', then find the minimum value accross the set of experiments to use as the pseudocount.
-    For version 2: 
-    add other_cols arg to output other columns that can also be used for filtering later.
+    other_cols arg is used to output other columns that can also be used for filtering later.
     '''
     dfs = []
     for i in experiments:
         query_str = '&'.join([f'{k} == "{v}"' if type(v) == str else f'{k} == {v}' for k,v in i.items()])
         # This only works if all the search values are strings, but not if float or int
-        # query_str = '&'.join([f'{k} == "{v}"' for k,v in i.items()])
         this_df = df.query(query_str)[[id_col, val_col, *other_cols]].copy()
         dfs.append(this_df)
     cdf = pd.merge(*dfs, left_on=id_col, right_on=id_col, suffixes=('_x', '_y'))

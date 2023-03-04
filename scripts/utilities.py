@@ -3,12 +3,9 @@ utilities.py
 Functions to clean and filter data
 '''
 import pandas as pd
-import os
 from pyfaidx import Fasta
 import numpy as np
 import statsmodels.api as sm
-import itertools
-from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import PolynomialFeatures
 
 def filter_low_exp(count_file, filter_co=1, npass=3,
