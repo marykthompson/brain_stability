@@ -1,15 +1,13 @@
-#version 2, write functions to work from the individual replicate values
-from array import array
+'''
+More complex plotting functions
+'''
 import numpy as np
-import math
 import pandas as pd
 import scipy.stats as stats
-from scipy.stats import hypergeom
 import os
 import gzip
 import shutil
 from urllib.request import urlretrieve
-from collections import defaultdict
 import matplotlib as mpl
 from matplotlib import lines
 import seaborn as sns
@@ -50,11 +48,6 @@ def get_letter_height(ax, fig, fontsize=7):
     ax_height = ax.get_window_extent(renderer=r).height
     ymin, ymax = ax.get_ylim()
     data_range = abs(ymax-ymin)
-    # calculate in display units because inverse transform not always working properly
-    # print('text height', text_height)
-    # axis_to_display = ax.transAxes
-    # total_height = axis_to_display.transform((0, data_range))[1]
-    # print('total_height', total_height)
     # This is the height of the letter R in the axis units
     R_height = text_height/ax_height
     # To get the height in data units
@@ -181,7 +174,7 @@ def sc_swarmplot(data=None, all_genes=None, *, x=None, y=None, hue=None, hue_nam
                    y_lab2='-log'r'$_{10}$'' p-value', hstart=bottom_y, lstart=hm_lstart, fig=fig, xticklabs1=['counts'], 
                    xticklabs2=['enrichment'], hm_xlab=False, order=order2, cbar_lab_sp=cbar_lab_sp)
 
-    return ax, res_tf
+    return ax, res_tf, p_vals
 
 def enrich_heatmap(data=None, all_genes=None, x=None, y=None, hue=None, hue_name=None, test_y=None, x_lab=None, y_lab1=None,
                    y_lab2=None, xticklabs1=['counts'], xticklabs2=['enrichment'], fig=None, lstart=0.68, hstart=0.15, hm_width=0.06, 
@@ -535,7 +528,11 @@ def get_group_Ns(df, x, hue=None, order=[False, True], hue_order=[False, True], 
 
     if ticklabels is None:
         return res
-    
     else:
         new_labels = [f'{i[0]}\nn = {i[1]}' for i in zip(ticklabels, res)]
         return new_labels
+
+def enrich_table(res, pvals):
+    show_enrich = pd.DataFrame([res['order'], res['enrich'], -np.log10(pvals)]).transpose()
+    show_enrich.columns = ['cell type', '-log10pval_enrich', '-log10pval_stability']
+    return show_enrich

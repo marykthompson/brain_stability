@@ -1,4 +1,4 @@
-#Parameters for the
+#Parameters for the analyses
 results_dir: ../../brain_results/301122_brain_foursu/
 results_dir_inctest: ../../brain_results/301122_brain_inctest/
 results_dir_pherson: ../../brain_results/301122_BG3_ph/

@@ -1,4 +1,4 @@
-#Run notebooks and Rscripts to create the NMJ figures
+#Run notebooks and Rscripts to create the figures
 #$ bash run_notebooks.sh TestFigs/
 #Use cmd + / to uncomment and run individual blocks
 
